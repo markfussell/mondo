@@ -1,0 +1,7 @@
+    //**************************************
+    //**************************************
+    //**************************************
+
+    public Map /*of String->Property*/ propertiesFor(Object anObject);
+    public Property propertyNamed_for(String name, Object anObject);
+    public List /*of Property*/ propertyListFor(Object anObject);

@@ -1,0 +1,574 @@
+/**
+ *
+ * This is a language to create a web of objects.  It is meant to be a more modern version
+ * of SGML: It is simpler to parse and easier to use with information modeling techniques
+ * to build interesting models.  It also has conventions that are a little more main stream.
+ *
+ * @author              Mark L. Fussell
+ * @version             v0.4.1 [971127]
+ *
+ 971127: Put in funny rules to support '!--'. Requires the ability to have an empty tag.
+ Need to answer the question: What does '!' mean?  '!' => 'MONDO:'
+
+ *
+ */
+
+options {
+  LOOKAHEAD = 1;
+  JAVA_UNICODE_ESCAPE = true;
+  UNICODE_INPUT = false;
+  // DEBUG_PARSER = true;
+  MULTI = true;
+  NODE_PREFIX = "AST_";
+  STATIC = false;
+}
+
+PARSER_BEGIN(OmlParser)
+
+package COM.chimu.mondoOml.parser;
+import java.util.Stack;
+
+public class OmlParser {
+
+    public static void main(String args[]) {
+        OmlParser parser;
+        if (args.length == 0) {
+            System.out.println("Oml Parser Version 0.1:  Reading from standard input . . .");
+            parser = new OmlParser(new java.io.DataInputStream(System.in));
+        } else if (args.length == 1) {
+            System.out.println("Oml Parser Version 0.1:  Reading from file " + args[0] + " . . .");
+            try {
+                parser = new OmlParser(new java.io.DataInputStream(new java.io.FileInputStream(args[0])));
+            } catch (java.io.FileNotFoundException e) {
+                System.out.println("Oml Parser Version 0.1:  File " + args[0] + " not found.");
+                return;
+            }
+        } else {
+            System.out.println("Oml Parser Version 0.2:  Usage is one of:");
+            System.out.println("         java COM.chimu.ocmlparser.OmlParser < inputfile");
+            System.out.println("OR");
+            System.out.println("         java COM.chimu.ocmlparser.OmlParser inputfile");
+            return;
+        }
+        try {
+            parser.setupForText();
+            parser.TextItems();
+            System.out.println("Oml Parser Version 0.1:  Oml Document parsed successfully.");
+
+            SimpleNode rootNode = (SimpleNode) parser.jjtree.rootNode();
+            rootNode.dump("");
+            Visitor visitor = new DumpVisitorClass();
+            visitor.visitSimpleNode(rootNode);
+
+        } catch (ParseError e) {
+            System.out.println("Oml Parser Version 0.1:  Encountered errors during parse.");
+            System.out.println("Parsed the following tree:");
+            SimpleNode rootNode = (SimpleNode) parser.jjtree.rootNode();
+            rootNode.dump("");
+        }
+    }
+
+    //******************************************
+    //******************************************
+    //******************************************
+
+        /**
+         * pushLexState and popLexState handle
+         * the return from a lexical mode to its
+         * enclosing state when the enclosing state
+         * may vary.  This occurs for Element
+         * because Elements can be within other Elements
+         * (as a ParameterValue) or with Content.
+         */
+    void pushLexState() {
+        stateStack[stackPos++] = lexState;
+        // stateStack.push(new Integer(lexState));
+        lexState = token_source.curLexState;
+    }
+
+    void popLexState() {
+        lexState = stateStack[--stackPos];
+        // lexState = ((Integer) stateStack.pop()).intValue();
+        token_source.SwitchTo(lexState);
+    }
+
+    public JJTOmlParserState jjtree() {
+        return jjtree;
+    }
+
+    public SimpleNode rootParseNode() {
+        try {
+            return (SimpleNode) this.jjtree.rootNode();
+        } catch (Exception e) {};
+        return null;
+    }
+
+    private int   lexState   = TextSect;
+    private int[] stateStack = new int[100];
+    private int   stackPos   = 0;
+
+ //   private Stack stateStack = new Stack();
+
+    //******************************************
+    //******************************************
+    //******************************************
+
+    public void setupForContent() {
+        lexState = TextSect;
+        token_source.SwitchTo(lexState);
+    }
+
+    public void setupForText() {
+        lexState = TextSect;
+        token_source.SwitchTo(lexState);
+    }
+
+    public void setupForList() {
+        lexState = ListSect;
+        token_source.SwitchTo(lexState);
+    }
+
+    public void setupForElement() {
+        lexState = ElementSect;
+        token_source.SwitchTo(lexState);
+    }
+
+
+    //******************************************
+    //******************************************
+    //******************************************
+
+    void elementCloseMismatchError(String openName, String closeName, Token beginTok, Token endTok) {
+        int beginLine   = beginTok.beginLine;
+        int beginColumn = beginTok.beginColumn;
+        int endLine     = endTok.endLine;
+        int endColumn   = endTok.endColumn;
+
+        System.err.println(
+                "Element opened with "+openName+" but closed with "+closeName+
+                " ("+beginLine+":"+beginColumn+"->"+endLine+":"+endColumn+
+                ") "
+            );
+    }
+
+    //******************************************
+    //******************************************
+    //******************************************
+
+}
+
+PARSER_END(OmlParser)
+
+
+/*****************************************
+ * OML TOKENS START HERE *
+ *****************************************/
+
+//******************************************
+//******************************************
+//******************************************
+// There are four lexical modes:
+//     ElementSect, ValueSect, ListSect, TextSect
+//
+
+<ElementSect,ValueSect,ListSect,TextSect> TOKEN :
+{
+   < TAGO:      "<"   > : ElementSect
+}
+
+<ElementSect,ValueSect,ListSect> SKIP : /* WHITE SPACE */
+{
+  " " | "\t" | "\n" | "\r" | "\f"
+}
+
+<ElementSect,ValueSect,ListSect> TOKEN : /* Delimited List and Text Start */
+{
+   < TXTO:     "{"  > : TextSect
+|  < LSTO:     "("  > : ListSect
+}
+
+<ElementSect,ValueSect,ListSect> SPECIAL_TOKEN : /* COMMENTS */
+{
+      <SINGLE_LINE_COMMENT: "//"  (~["\n","\r"])* ("\n"|"\r"|"\r\n")>
+    | <SGML_COMMENT:        "--"  (~["-"])* "-" ((~["-"])* "-")* "-">
+    | <SGML_COMMENT2:       "!--"  (~["-"])* "-" ((~["-"])* "-")* "-">
+    | <MULTI_LINE_COMMENT:  "/*"  (~["*"])* "*" ("*" | (~["*","/"] (~["*"])* "*"))* "/">
+}
+
+<ElementSect,ValueSect,ListSect> TOKEN : /* Tokens recognized inline or after the attribute */
+{
+   < StringSQ:
+      "\'"
+      (   (~["\'","\\","\n","\r"])
+        | ("\\"
+            ( ["n","t","b","r","f","\\","'","\""]
+            | ["0"-"7"] ( ["0"-"7"] )?
+            | ["0"-"3"] ["0"-"7"] ["0"-"7"]
+            )
+          )
+      )*
+      "\'"
+   >
+|  < StringDQ:
+      "\""
+      (   (~["\"","\\","\n","\r"])
+        | ("\\"
+            ( ["n","t","b","r","f","\\","'","\""]
+            | ["0"-"7"] ( ["0"-"7"] )?
+            | ["0"-"3"] ["0"-"7"] ["0"-"7"]
+            )
+          )
+      )*
+      "\""
+   >
+|  <StringLQ : "[["
+                (    ~[ "]" ]
+                    | ( "]"   ~["]"] )
+                )*
+              "]]"
+   >
+|  <StringVLQ : "[CDATA["
+                (    ~[ "]" ]
+                    | ( "]"      ~["C"] )
+                    | ( "]C"     ~["D"] )
+                    | ( "]CD"    ~["A"] )
+                    | ( "]CDA"   ~["T"] )
+                    | ( "]CDAT"  ~["A"] )
+                )*
+              "]" "CDATA" "]"
+    >
+
+}
+
+//******************************************
+//******************************************
+//******************************************
+
+<TextSect> TOKEN :  /*TEXT CONTENT*/
+{
+   < TXTC:    "}">
+|  < Chars:
+     (  (~["<","}","\\"])
+      | ( "\\"
+            ( ["n","t","b","r","f","\\","'","\"","}","<"] )
+            | ["0"-"7"] ( ["0"-"7"] )?
+            | ["0"-"3"] ["0"-"7"] ["0"-"7"]
+        )
+        )+
+   >
+}
+
+//******************************************
+//******************************************
+//******************************************
+
+<ListSect> TOKEN :
+{
+   < LSTC:    ")">
+}
+
+//******************************************
+//******************************************
+//******************************************
+<ElementSect> TOKEN :  /* Tokens recognized when within a tag */
+{
+   < TAGC:      ">"  >
+|  < EQ:        "="  > : ValueSect
+
+|  < #Letter:  ["a"-"z","A"-"Z"] >
+|  < #Digit:   ["0"-"9"] >
+|  < #MiscName:  "." | "-" | "_" | ":" >
+|  < #NameChar:   <Letter> |  <Digit> | <MiscName> >
+|  < #LetterName: <Letter> ( <NameChar> )* >
+
+|  < #Prefix:  ["?","!","&"] >
+|  < #PrefixName: <Prefix>  ( <LetterName> )?>
+
+|  < Name: <LetterName> | <PrefixName> >
+}
+
+/*
+!-- => beginning of comment
+--  =>
+! OK
+
+|  < #Letter:  ["a"-"z","A"-"Z"] >
+|  < #Digit:   ["0"-"9"] >
+|  < #MiscName:  "." | "-" | "_" | ":" >
+|  < #NameChar:   <Letter> |  <Digit> | <MiscName> >
+|  < #LetterName: <Letter> ( <NameChar> )* >
+
+( <Letter> ( <NameChar> )* )?
+|  < Chars:
+     (  (~["!"])
+
+      | ( "\\"
+            ( ["n","t","b","r","f","\\","'","\"","}","<"] )
+            | ["0"-"7"] ( ["0"-"7"] )?
+            | ["0"-"3"] ["0"-"7"] ["0"-"7"]
+        )
+        )+
+   >
+
+!:Foo-Bar
+!123
+<Foo
+!
+
+<Prefix> <AfterPrefix> <NameChar>
+<Letter> <NameChar>
+
+<123>
+*/
+
+
+//******************************************
+//******************************************
+//******************************************
+
+<ElementSect,ValueSect,ListSect> TOKEN : /* Tokens recognized after the attribute = */
+{
+  < DirectLiteral:
+      (         ~["\"","\n","\r"," ","\t","\'","{","}","<",">","(",")","=","/"]  )
+      (   (~["\\","\"","\n","\r"," ","\t","\'","{","}","<",">","(",")","=","/"])
+        | ("\\"
+            ( ["n","t","b","r","f","\\","'","\""]
+            | ["0"-"7"] ( ["0"-"7"] )?
+            | ["0"-"3"] ["0"-"7"] ["0"-"7"]
+            )
+          )
+      )*
+   >
+}
+
+
+/*****************************************
+ * OML GRAMMAR STARTS HERE *
+ *****************************************/
+
+
+
+//******************************************
+//******************************************
+//******************************************
+SimpleNode Element() :
+{
+    Token tok;
+    Token beginTok, endTok;
+    String openName, closeName;
+    SimpleNode  node  = null;
+}
+{
+  beginTok=<TAGO>
+      { pushLexState(); }
+  (
+      tok = <Name>
+          {
+            jjtThis.setName(tok.image); openName = tok.image.toUpperCase();
+          }
+      (
+          node = Parameter()
+        | UnnamedParameter() {node = null;}
+      )*
+  )?
+  endTok = <TAGC>
+      {
+        popLexState();
+
+        if (node != null) {  //We have a potention closing label
+            AST_Parameter parameter = (AST_Parameter) node;
+            if ( parameter.hasNoValue() ) {
+                closeName = parameter.name.toUpperCase();
+                if (! closeName.equals(openName) ) {
+                    elementCloseMismatchError(openName, closeName, beginTok, endTok);
+                }
+            }
+        }
+      }
+      { return jjtThis; }
+}
+
+
+SimpleNode Parameter() :
+{
+    Token tok;
+    Token value = null;
+    Node  node = null;
+}
+{
+  tok = <Name>
+      { jjtThis.setName(tok.image); }
+  ( <EQ>
+    Value()
+  )?
+      { return jjtThis; }
+}
+
+SimpleNode UnnamedParameter() :
+{}
+{
+    DelimitedValue()
+      { return jjtThis; }
+}
+
+//******************************************
+//******************************************
+//******************************************
+
+SimpleNode Value() #void:
+
+{  Node  node = null;  }
+{
+   ( node = DirectValue()
+     |
+     node = DelimitedValue()
+   )
+      { return (SimpleNode) node; }
+}
+
+SimpleNode DirectValue() :
+{
+    Token value = null;
+}
+{
+      { pushLexState(); }
+   value = <DirectLiteral>
+      { popLexState(); }
+      { jjtThis.setValue(value.image);  return jjtThis;}
+}
+
+SimpleNode DelimitedValue() #void:
+{  Node  node = null;  }
+{
+      { pushLexState(); }
+  (
+       node =  StringLiteral()
+    |  node =  Element()
+    |  node =  List()
+    |  node =  Text()
+  )
+      { popLexState(); }
+      { return (SimpleNode) node; }
+}
+
+//******************************************
+//******************************************
+//******************************************
+
+SimpleNode StringLiteral() #String :
+{
+    Token value = null;
+}
+{
+  (
+       value = <StringSQ>
+            {jjtThis.setValue_unquote(value.image,1); return jjtThis;}
+     | value = <StringDQ>
+            {jjtThis.setValue_unquote(value.image,1); return jjtThis;}
+     | value = <StringLQ>
+            {jjtThis.setValue_unquoteDChar(value.image,'['); return jjtThis;}
+     | value = <StringVLQ>
+            {jjtThis.setValue_unquoteDChar(value.image,'['); return jjtThis;}
+  )
+}
+
+//******************************************
+//******************************************
+//******************************************
+
+SimpleNode List() #void :
+{
+    SimpleNode  node  = null;
+}
+{
+  <LSTO>
+      { pushLexState(); }
+ node  = ListItems()
+  <LSTC>
+      { popLexState();  return (SimpleNode) node; }
+}
+
+SimpleNode ListItems() #List :
+{
+    SimpleNode  node  = null;
+}
+{
+  (
+     node  = Value()
+      {
+          jjtThis.appendNode(node);
+      }
+  ) *
+      { return jjtThis; }
+}
+
+//******************************************
+//******************************************
+//******************************************
+
+SimpleNode Text() #void :
+{
+    Token       value = null;
+    SimpleNode  node  = null;
+}
+{
+  <TXTO>
+      { pushLexState(); }
+  node = TextItems()
+  <TXTC>
+      { popLexState();  return (SimpleNode) node; }
+}
+
+SimpleNode TextItems() #Text:
+{
+    Token       value = null;
+    SimpleNode  node  = null;
+}
+{
+  ( (
+          value = <Chars>
+        | node  = Element()
+    )
+      {
+            if (value != null) {
+                jjtThis.appendChars(value.image);
+                value = null;
+            };
+            if (node != null) {
+                jjtThis.appendNode(node);
+                node = null;
+            };
+      }
+  ) *
+      { return jjtThis; }
+}
+
+//******************************************
+//******************************************
+//******************************************
+
+void ObjectListFile() #void :
+{}
+{
+      {setupForList();}
+  ListItems()
+  <EOF>
+}
+
+/*
+ * Program structuring syntax follows.
+ */
+//Disable the <EOF>??
+void TextFile() #void :
+{}
+{
+      {setupForText();}
+  TextItems()
+  <EOF>
+}
+
+//******************************************
+//******************************************
+//******************************************
+
+
